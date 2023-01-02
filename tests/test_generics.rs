@@ -58,6 +58,97 @@ pub enum EnumFromGeneric<E> {
 
 // Should expand to:
 //
+//     impl<E> std::fmt::Display for EnumSourceGeneric<E>;
+//
+//     impl<E> std::error::Error for EnumSourceGeneric<E>
+//     where
+//         E: std::error::Error + 'static,
+//         Self: std::fmt::Debug + std::fmt::Display;
+//
+#[derive(Error, Debug)]
+pub enum EnumSourceGeneric<E> {
+    #[error("enum with a generic source")]
+    Source(#[source] E),
+}
+
+#[test]
+fn test_enum_source_generic() {
+    #[derive(Debug)]
+    struct SourceError {
+        message: &'static str,
+    }
+
+    impl Display for SourceError {
+        fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+            formatter.write_str(self.message)
+        }
+    }
+
+    impl std::error::Error for SourceError {}
+
+    let err_with_generic_source = EnumSourceGeneric::Source(SourceError {
+        message: "Source error",
+    });
+
+    assert!(match &err_with_generic_source {
+        EnumSourceGeneric::Source(source_err) => source_err.message == "Source error",
+    });
+
+    let err: &dyn std::error::Error = &err_with_generic_source;
+
+    assert!(match err.source() {
+        Some(err_source) => err_source.to_string() == "Source error",
+        None => false,
+    });
+}
+
+// Should expand to:
+//
+//     impl<E> std::fmt::Display for EnumSourceGenericErrAsRef<E>;
+//
+//     impl<E> std::error::Error for EnumSourceGenericErrAsRef<E>
+//     where
+//         E: AsRef<dyn std::error::Error + 'static>,
+//         Self: std::fmt::Debug + std::fmt::Display;
+//
+#[derive(Error, Debug)]
+#[thiserror(generics_err_as_ref)]
+pub enum EnumSourceGenericErrAsRef<E> {
+    #[error("enum with a generic source")]
+    Source(#[source] E),
+}
+
+#[test]
+fn test_enum_source_generic_err_as_ref() {
+    #[derive(Debug)]
+    struct SourceError {
+        inner: EnumDebugGeneric<u64>,
+    }
+
+    impl AsRef<dyn std::error::Error + 'static> for SourceError {
+        fn as_ref(&self) -> &(dyn std::error::Error + 'static) {
+            &self.inner
+        }
+    }
+
+    let err_with_generic_source = EnumSourceGenericErrAsRef::Source(SourceError {
+        inner: EnumDebugGeneric::FatalError(100),
+    });
+
+    assert!(match &err_with_generic_source {
+        EnumSourceGenericErrAsRef::Source(source_err) => source_err.inner.to_string() == "100",
+    });
+
+    let err: &dyn std::error::Error = &err_with_generic_source;
+
+    assert!(match err.source() {
+        Some(err_source) => err_source.to_string() == "100",
+        None => false,
+    });
+}
+
+// Should expand to:
+//
 //     impl<HasDisplay, HasDebug, HasNeither> Display
 //         for EnumCompound<HasDisplay, HasDebug, HasNeither>
 //     where

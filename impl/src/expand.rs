@@ -11,10 +11,12 @@ use syn::{
 
 pub fn derive(node: &DeriveInput) -> Result<TokenStream> {
     let input = Input::from_syn(node)?;
+
     input.validate()?;
+
     Ok(match input {
-        Input::Struct(input) => impl_struct(input),
-        Input::Enum(input) => impl_enum(input),
+        Input::Struct(struct_input) => impl_struct(struct_input),
+        Input::Enum(enum_input) => impl_enum(enum_input),
     })
 }
 
@@ -194,19 +196,37 @@ fn impl_struct(input: Struct) -> TokenStream {
 
 fn impl_enum(input: Enum) -> TokenStream {
     let ty = &input.ident;
+
     let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
+
     let mut error_inferred_bounds = InferredBounds::new();
+
+    let attrs = &input.attrs;
+
+    let generic_type_bound = if attrs.config.generics_err_as_ref {
+        quote!(AsRef<std::error::Error + 'static>)
+    } else {
+        quote!(std::error::Error + 'static)
+    };
+
+    let as_err = if attrs.config.generics_err_as_ref {
+        quote! { .as_ref() }
+    } else {
+        quote! { .as_dyn_error() }
+    };
 
     let source_method = if input.has_source() {
         let arms = input.variants.iter().map(|variant| {
             let ident = &variant.ident;
             if variant.attrs.transparent.is_some() {
                 let only_field = &variant.fields[0];
+
                 if only_field.contains_generic {
-                    error_inferred_bounds.insert(only_field.ty, quote!(std::error::Error));
+                    error_inferred_bounds.insert(only_field.ty, generic_type_bound.clone());
                 }
+
                 let member = &only_field.member;
-                let source = quote!(std::error::Error::source(transparent.as_dyn_error()));
+                let source = quote!(std::error::Error::source(transparent#as_err));
                 quote! {
                     #ty::#ident {#member: transparent} => #source,
                 }
@@ -214,7 +234,8 @@ fn impl_enum(input: Enum) -> TokenStream {
                 let source = &source_field.member;
                 if source_field.contains_generic {
                     let ty = unoptional_type(source_field.ty);
-                    error_inferred_bounds.insert(ty, quote!(std::error::Error + 'static));
+
+                    error_inferred_bounds.insert(ty, generic_type_bound.clone());
                 }
                 let asref = if type_is_option(source_field.ty) {
                     Some(quote_spanned!(source.span()=> .as_ref()?))
@@ -222,7 +243,7 @@ fn impl_enum(input: Enum) -> TokenStream {
                     None
                 };
                 let varsource = quote!(source);
-                let dyn_error = quote_spanned!(source.span()=> #varsource #asref.as_dyn_error());
+                let dyn_error = quote_spanned!(source.span()=> #varsource #asref#as_err);
                 quote! {
                     #ty::#ident {#source: #varsource, ..} => std::option::Option::Some(#dyn_error),
                 }

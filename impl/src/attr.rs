@@ -9,11 +9,25 @@ use syn::{
 };
 
 pub struct Attrs<'a> {
+    pub config: Config,
     pub display: Option<Display<'a>>,
     pub source: Option<&'a Attribute>,
     pub backtrace: Option<&'a Attribute>,
     pub from: Option<&'a Attribute>,
     pub transparent: Option<Transparent<'a>>,
+}
+
+#[derive(Debug)]
+pub struct Config {
+    pub generics_err_as_ref: bool,
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            generics_err_as_ref: false,
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -46,6 +60,7 @@ pub enum Trait {
 
 pub fn get(input: &[Attribute]) -> Result<Attrs> {
     let mut attrs = Attrs {
+        config: Config::default(),
         display: None,
         source: None,
         backtrace: None,
@@ -56,6 +71,8 @@ pub fn get(input: &[Attribute]) -> Result<Attrs> {
     for attr in input {
         if attr.path.is_ident("error") {
             parse_error_attribute(&mut attrs, attr)?;
+        } else if attr.path.is_ident("thiserror") {
+            parse_thiserror_attribute(&mut attrs, attr)?;
         } else if attr.path.is_ident("source") {
             require_empty_attribute(attr)?;
             if attrs.source.is_some() {
@@ -81,6 +98,27 @@ pub fn get(input: &[Attribute]) -> Result<Attrs> {
     }
 
     Ok(attrs)
+}
+
+fn parse_thiserror_attribute<'a>(attrs: &mut Attrs<'a>, attr: &'a Attribute) -> Result<()> {
+    syn::custom_keyword!(generics_err_as_ref);
+
+    attr.parse_args_with(|input: ParseStream| {
+        if let Some(_kw) = input.parse::<Option<generics_err_as_ref>>()? {
+            if attrs.config.generics_err_as_ref {
+                return Err(Error::new_spanned(
+                    attr,
+                    "duplicate #[thiserror(generics_err_as_ref)] attribute",
+                ));
+            }
+
+            attrs.config.generics_err_as_ref = true;
+
+            return Ok(());
+        }
+
+        Ok(())
+    })
 }
 
 fn parse_error_attribute<'a>(attrs: &mut Attrs<'a>, attr: &'a Attribute) -> Result<()> {
